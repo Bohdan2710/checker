@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SEO & LLM Checker: Live Preview</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+  <h1>📦 Пакетный SEO Checker + Live Preview</h1>
+  <p>Проверка: Canonical, Hreflangs, Robots, Sitemap, LLMS. Нажмите <strong>🌐 Live Preview</strong> для просмотра
+    дизайна и адаптивности.</p>
+
+  <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+    <h3>Нажмите для выбора архивов (можно несколько .zip)</h3>
+    <input type="file" id="fileInput" accept=".zip" multiple>
+  </div>
+
+  <div id="loading">Идет анализ файлов...</div>
+  <div id="reportsContainer"></div>
+
+  <div id="codeModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle" class="modal-title">Исходный код</h3>
+        <span class="close-btn" onclick="closeCodeModal()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <pre id="modalCode" class="code-block"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="previewModal" class="modal-overlay">
+    <div class="modal-content preview-mode">
+      <div class="modal-body preview-body">
+        <div class="device-toolbar">
+          <div class="page-selector-container">
+            <label for="pageSelector">📄 Страница:</label>
+            <select id="pageSelector" onchange="switchPreviewPage(this.value)"></select>
+          </div>
+          <div class="resize-controls">
+            <label for="widthSlider">Ширина: <span id="widthValue"
+                style="display:inline-block; width:45px;">100%</span></label>
+            <input type="range" id="widthSlider" min="320" max="2500" step="10" value="2500"
+              oninput="changeIframeWidth(this.value)">
+            <button class="device-btn" id="fullscreenBtn" onclick="toggleFullscreenPreview()">⛶ На весь экран</button>
+          </div>
+          <span class="close-btn" onclick="closePreviewModal()">&times;</span>
+        </div>
+      </div>
+      <div class="iframe-wrapper">
+        <iframe id="liveIframe" sandbox="allow-scripts allow-same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+
+</html>
