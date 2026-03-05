@@ -184,7 +184,7 @@ h1 {
 .col-href {
   width: 25%;
 }
-
+.col-errors,
 .col-schema {
   width: 20%;
 }
@@ -489,4 +489,70 @@ pre.code-block {
 .meta-label {
   font-weight: bold;
   color: #333;
+}
+
+/* --- СТИЛИ ДЛЯ ОШИБОК ИЗОБРАЖЕНИЙ --- */
+
+/* Подсветка всей строки с ошибкой */
+tr.row-error {
+  background-color: #fff5f5; /* Легкий красный фон */
+}
+
+tr.row-error td {
+  border-bottom: 1px solid #ffcccc;
+}
+
+tr.row-error:hover {
+  background-color: #ffebeb;
+}
+
+/* Контейнер ячейки ошибок */
+.error-cell-container {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Список битых ссылок */
+.error-list {
+  max-height: 100px;
+  overflow-y: auto;
+  border: 1px solid #ffcccc;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 4px;
+}
+
+/* Элемент битой ссылки */
+.error-url-item {
+  font-family: Consolas, Monaco, monospace;
+  color: var(--error);
+  font-size: 10px;
+  word-break: break-all;
+  padding: 4px;
+  border-bottom: 1px dashed #ffe0e0;
+  line-height: 1.2;
+}
+
+.error-url-item:last-child {
+  border-bottom: none;
+}
+
+/* Кастомный тонкий скроллбар для списка ошибок */
+.error-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.error-list::-webkit-scrollbar-track {
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.error-list::-webkit-scrollbar-thumb {
+  background-color: #ff9999;
+  border-radius: 4px;
+}
+
+.error-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--error);
 }
