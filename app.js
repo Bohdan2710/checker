@@ -23,6 +23,9 @@ function closePreviewModal() {
   previewModal.style.display = "none";
   document.getElementById('liveIframe').srcdoc = "";
   window.currentPreviewZip = null;
+  if (document.fullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen();
+  }
 }
 
 window.openModal = function (id, title) {
@@ -71,7 +74,7 @@ async function processZipFile(file) {
 
     const allFilePaths = Object.keys(contents.files);
     const htmlFiles = allFilePaths.filter(path => path.endsWith('.html') && !path.startsWith('__MACOSX'));
-
+    
     window.projectPages[zipId] = htmlFiles;
 
     await checkRootFiles(contents, allFilePaths, rootPanel);
@@ -171,12 +174,20 @@ function createModalButton(statusHtml, codeString, modalTitle) {
         `;
 }
 
+// 💥 ТОТАЛЬНАЯ ЗАЧИСТКА BOM И НЕВИДИМЫХ СИМВОЛОВ 💥
+function cleanText(text) {
+    if (!text) return text;
+    return text.replace(/^[\uFEFF\u200B]+/, '').replace(/[\uFEFF\u200B]/g, '').trim();
+}
+
 async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
   const parser = new DOMParser();
   htmlFiles.sort();
 
   for (const filePath of htmlFiles) {
-    const fileData = await zipContents.file(filePath).async("string");
+    let fileData = await zipContents.file(filePath).async("string");
+    fileData = cleanText(fileData); 
+    
     const doc = parser.parseFromString(fileData, "text/html");
     const tr = document.createElement('tr');
 
@@ -245,25 +256,49 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
   }
 }
 
+// 🗺 УМНОЕ РАЗРЕШЕНИЕ ПУТЕЙ
 function resolvePath(basePath, relativePath) {
   if (!relativePath) return '';
+  try { relativePath = decodeURIComponent(relativePath); } catch(e) {}
+
   if (relativePath.startsWith('http') || relativePath.startsWith('data:') || relativePath.startsWith('//')) return relativePath;
+  if (relativePath.startsWith('/')) return relativePath.substring(1); 
 
-  if (relativePath.startsWith('/')) {
-    return relativePath.substring(1);
-  }
-
-  const stack = basePath.split('/').slice(0, -1);
+  const baseDir = basePath.includes('/') ? basePath.substring(0, basePath.lastIndexOf('/')) : '';
+  const stack = baseDir ? baseDir.split('/') : [];
   const parts = relativePath.split('/');
+  
   for (const part of parts) {
-    if (part === '.' || part === "") continue; // Игнорируем пустые части и текущую директорию
+    if (part === '.' || part === "") continue; 
     if (part === '..') {
-      if (stack.length > 0) stack.pop(); // Защита от выхода за пределы корня
+        if (stack.length > 0) stack.pop(); 
     } else {
-      stack.push(part);
+        stack.push(part);
     }
   }
   return stack.join('/');
+}
+
+// 📂 УМНЫЙ ПОИСК В АРХИВЕ (Игнорирует ошибки %20 и вложенные папки)
+function getFileFromZip(zip, path) {
+    if (!path) return null;
+    
+    if (zip.file(path)) return zip.file(path);
+    
+    try {
+        const decoded = decodeURIComponent(path);
+        if (zip.file(decoded)) return zip.file(decoded);
+    } catch(e) {}
+
+    // Поиск файла, если шаблон запакован внутри корневой папки (например "MySite/images/...")
+    const allFiles = Object.keys(zip.files);
+    for (let f of allFiles) {
+        if (f.endsWith('/' + path) || f === path) {
+             return zip.file(f);
+        }
+    }
+    
+    return null;
 }
 
 async function replaceCssUrls(cssText, cssPath, zip) {
@@ -274,63 +309,61 @@ async function replaceCssUrls(cssText, cssPath, zip) {
     const originalUrl = match[2];
     const cleanUrl = originalUrl.split('?')[0].split('#')[0];
     const resolvedAssetPath = resolvePath(cssPath, cleanUrl);
+    
+    const fileEntry = getFileFromZip(zip, resolvedAssetPath);
 
-    if (zip.file(resolvedAssetPath)) {
-      const base64 = await zip.file(resolvedAssetPath).async("base64");
+    if (fileEntry) {
+      const base64 = await fileEntry.async("base64");
       const ext = resolvedAssetPath.split('.').pop().toLowerCase();
-      let mime = 'image/jpeg';
-      if (ext === 'png') mime = 'image/png';
-      else if (ext === 'svg') mime = 'image/svg+xml';
-      else if (ext === 'gif') mime = 'image/gif';
-      else if (ext === 'webp') mime = 'image/webp';
-      else if (ext === 'avif') mime = 'image/avif';
-      else if (ext === 'woff2') mime = 'font/woff2';
-      else if (ext === 'woff') mime = 'font/woff';
-      else if (ext === 'ttf') mime = 'font/ttf';
+      let mime = 'application/octet-stream'; 
+      
+      if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif'].includes(ext)) {
+          mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+      } else if (['woff2', 'woff', 'ttf', 'otf', 'eot'].includes(ext)) {
+          mime = `font/${ext}`;
+      }
 
       const dataUrl = `data:${mime};base64,${base64}`;
       cssText = cssText.replace(match[0], `url("${dataUrl}")`);
     } else {
-      console.warn('CSS Asset not found in ZIP:', resolvedAssetPath);
+      console.warn(`[CSS Asset] Не найден: ${resolvedAssetPath}`);
     }
   }
   return cssText;
 }
 
-window.openProjectPreview = function (zipId, startFilePath = null) {
+window.openProjectPreview = function(zipId, startFilePath = null) {
   window.currentPreviewZip = zipId;
   const pages = window.projectPages[zipId] || [];
-
+  
   if (pages.length === 0) return alert('HTML файлы не найдены в архиве.');
 
   const selector = document.getElementById('pageSelector');
   selector.innerHTML = '';
   pages.forEach(page => {
-    const opt = document.createElement('option');
-    opt.value = page;
-    opt.textContent = page;
-    selector.appendChild(opt);
+      const opt = document.createElement('option');
+      opt.value = page;
+      opt.textContent = page;
+      selector.appendChild(opt);
   });
 
   let targetPage = startFilePath;
   if (!targetPage || !pages.includes(targetPage)) {
-    targetPage = pages.find(p => p.toLowerCase().endsWith('index.html')) || pages[0];
+      targetPage = pages.find(p => p.toLowerCase().endsWith('index.html')) || pages[0];
   }
-
+  
   selector.value = targetPage;
-
+  
   document.getElementById('previewModal').style.display = 'block';
-
-  // Сброс ширины на 100% при открытии нового проекта
   document.getElementById('widthSlider').value = 2500;
   changeIframeWidth(2500);
-
+  
   loadPreviewPage(zipId, targetPage);
 };
 
-window.switchPreviewPage = function (filePath) {
+window.switchPreviewPage = function(filePath) {
   if (window.currentPreviewZip) {
-    loadPreviewPage(window.currentPreviewZip, filePath);
+      loadPreviewPage(window.currentPreviewZip, filePath);
   }
 };
 
@@ -339,87 +372,98 @@ async function loadPreviewPage(zipId, filePath) {
   if (!zip) return alert('Архив не найден в памяти.');
 
   const iframe = document.getElementById('liveIframe');
-
-  iframe.srcdoc = "<html><body style='font-family:sans-serif; text-align:center; padding-top:20%;'>Собираем страницу (встраиваем стили и картинки)...</body></html>";
+  iframe.srcdoc = "<html><body style='font-family:sans-serif; text-align:center; padding-top:20%; background:#222; color:#fff;'>Сборка страницы (Стили, Скрипты, Картинки)...</body></html>";
 
   try {
-    const fileData = await zip.file(filePath).async("string");
+    let fileData = await zip.file(filePath).async("string");
+    fileData = cleanText(fileData); 
+    
     const parser = new DOMParser();
     const doc = parser.parseFromString(fileData, "text/html");
 
+    // 1. CSS (<link>)
     const links = doc.querySelectorAll('link[rel="stylesheet"]');
     for (let link of links) {
       const href = link.getAttribute('href');
       if (href && !href.startsWith('http') && !href.startsWith('//')) {
         const resolved = resolvePath(filePath, href.split('?')[0]);
-        if (zip.file(resolved)) {
-          let cssText = await zip.file(resolved).async("string");
+        const fileEntry = getFileFromZip(zip, resolved);
+        
+        if (fileEntry) {
+          let cssText = await fileEntry.async("string");
+          cssText = cleanText(cssText); 
           cssText = await replaceCssUrls(cssText, resolved, zip);
           const style = doc.createElement('style');
           style.textContent = cssText;
           link.replaceWith(style);
-        } else {
-          console.warn('CSS not found in ZIP:', resolved);
         }
       }
     }
 
-    const imgs = doc.querySelectorAll('img');
-    for (let img of imgs) {
-      const src = img.getAttribute('src');
-      if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('//')) {
-        const resolved = resolvePath(filePath, src.split('?')[0]);
-        if (zip.file(resolved)) {
-          const base64 = await zip.file(resolved).async("base64");
-          const ext = resolved.split('.').pop().toLowerCase();
-          let mime = 'image/jpeg';
-          if (ext === 'png') mime = 'image/png';
-          else if (ext === 'svg') mime = 'image/svg+xml';
-          else if (ext === 'gif') mime = 'image/gif';
-          else if (ext === 'webp') mime = 'image/webp';
-          else if (ext === 'avif') mime = 'image/avif';
-
-          img.setAttribute('src', `data:${mime};base64,${base64}`);
-        } else {
-          console.warn('Image not found in ZIP:', resolved);
-        }
+    // 2. Инлайн <style>
+    const inlineStyles = doc.querySelectorAll('style');
+    for (let style of inlineStyles) {
+      if (style.textContent && style.textContent.includes('url(')) {
+        style.textContent = await replaceCssUrls(style.textContent, filePath, zip);
       }
     }
 
-    const sources = doc.querySelectorAll('source');
-    for (let source of sources) {
-      const srcset = source.getAttribute('srcset');
-      if (srcset && !srcset.startsWith('http') && !srcset.startsWith('data:') && !srcset.startsWith('//')) {
-        const resolved = resolvePath(filePath, srcset.split('?')[0]);
-        if (zip.file(resolved)) {
-          const base64 = await zip.file(resolved).async("base64");
-          const ext = resolved.split('.').pop().toLowerCase();
-          let mime = 'image/jpeg';
-          if (ext === 'png') mime = 'image/png';
-          else if (ext === 'svg') mime = 'image/svg+xml';
-          else if (ext === 'gif') mime = 'image/gif';
-          else if (ext === 'webp') mime = 'image/webp';
-          else if (ext === 'avif') mime = 'image/avif';
+    // 3. Атрибуты style="..." (часто используются в Elementor)
+    const styledElements = doc.querySelectorAll('[style*="url("]');
+    for (let el of styledElements) {
+      let inlineCssText = el.getAttribute('style');
+      inlineCssText = await replaceCssUrls(inlineCssText, filePath, zip);
+      el.setAttribute('style', inlineCssText);
+    }
 
-          source.setAttribute('srcset', `data:${mime};base64,${base64}`);
-        }
+    // 4. Картинки (<img> и <source>)
+    const mediaElements = doc.querySelectorAll('img, source');
+    for (let el of mediaElements) {
+      for (let attrName of ['src', 'srcset']) {
+          const url = el.getAttribute(attrName);
+          
+          if (url && !url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('//')) {
+            const resolved = resolvePath(filePath, url.split('?')[0].split(' ')[0]);
+            const fileEntry = getFileFromZip(zip, resolved);
+            
+            if (fileEntry) {
+              const base64 = await fileEntry.async("base64");
+              const ext = resolved.split('.').pop().toLowerCase();
+              let mime = 'image/jpeg';
+              if (ext === 'png') mime = 'image/png';
+              else if (ext === 'svg') mime = 'image/svg+xml';
+              else if (ext === 'gif') mime = 'image/gif';
+              else if (ext === 'webp') mime = 'image/webp';
+              else if (ext === 'avif') mime = 'image/avif';
+
+              el.setAttribute(attrName, `data:${mime};base64,${base64}`);
+            }
+          }
       }
     }
 
-    const scripts = doc.querySelectorAll('script[src]');
+    // 5. 🤖 ИДЕАЛЬНАЯ ИНЪЕКЦИЯ СКРИПТОВ ДЛЯ ELEMENTOR
+    const scripts = Array.from(doc.querySelectorAll('script'));
     for (let script of scripts) {
       const src = script.getAttribute('src');
+      
       if (src && !src.startsWith('http') && !src.startsWith('//')) {
         const resolved = resolvePath(filePath, src.split('?')[0]);
-        if (zip.file(resolved)) {
-          const jsText = await zip.file(resolved).async("string");
-          const newScript = doc.createElement('script');
-          newScript.textContent = jsText;
-          script.replaceWith(newScript);
+        const fileEntry = getFileFromZip(zip, resolved);
+        
+        if (fileEntry) {
+          let jsText = await fileEntry.async("string");
+          jsText = cleanText(jsText); 
+          // Конвертируем JS в Base64, сохраняя тег <script> со всеми атрибутами (типа defer)
+          const base64Js = btoa(unescape(encodeURIComponent(jsText)));
+          script.setAttribute('src', `data:text/javascript;base64,${base64Js}`);
         }
+      } else if (!src && script.textContent) {
+        script.textContent = cleanText(script.textContent);
       }
     }
 
+    // 6. Скрипт-перехватчик кликов
     const interceptScript = doc.createElement('script');
     interceptScript.textContent = `
       document.addEventListener('click', function(e) {
@@ -427,7 +471,6 @@ async function loadPreviewPage(zipId, filePath) {
           if (a) {
               const href = a.getAttribute('href');
               if (!href || href.startsWith('http') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
-              
               if (href.startsWith('#')) return; 
               
               e.preventDefault();
@@ -435,13 +478,9 @@ async function loadPreviewPage(zipId, filePath) {
               window.parent.handleIframeLinkClick('${zipId}', '${filePath}', href);
           }
       }, true);
-
-      document.addEventListener('submit', function(e) {
-          e.preventDefault();
-          e.stopPropagation();
-      }, true);
+      document.addEventListener('submit', function(e) { e.preventDefault(); e.stopPropagation(); }, true);
     `;
-
+    
     if (doc.head) doc.head.appendChild(interceptScript);
     else doc.documentElement.appendChild(interceptScript);
 
@@ -452,94 +491,70 @@ async function loadPreviewPage(zipId, filePath) {
   }
 }
 
-// Обработка кликов по ссылкам ВНУТРИ iframe
-window.handleIframeLinkClick = function (zipId, currentFilePath, href) {
-  let cleanHref = href.split('?')[0].split('#')[0];
+// 🧭 УЛУЧШЕННАЯ НАВИГАЦИЯ (Решает проблему с ../)
+window.handleIframeLinkClick = function(zipId, currentFilePath, href) {
+    let cleanHref = href.split('?')[0].split('#')[0];
+    const pages = window.projectPages[zipId] || [];
 
-  if (!cleanHref || cleanHref === '/' || cleanHref === './') cleanHref = 'index.html';
+    function openPage(pagePath) {
+        document.getElementById('pageSelector').value = pagePath;
+        window.switchPreviewPage(pagePath);
+    }
 
-  let resolved = resolvePath(currentFilePath, cleanHref);
+    if (!cleanHref || cleanHref === '/' || cleanHref === './') cleanHref = 'index.html';
 
-  // ИСПРАВЛЕНИЕ: Если путь разрешился в корень (пустая строка), направляем на главную
-  if (resolved === '') {
-    resolved = 'index.html';
-  }
+    let resolved = resolvePath(currentFilePath, cleanHref);
+    
+    // Перехват клика по "Home" или "../" из вложенных папок
+    if (resolved === '' || resolved === 'index.html') {
+        let rootIndex = pages.find(p => p === 'index.html' || (p.split('/').length === 2 && p.endsWith('index.html')));
+        if (rootIndex) return openPage(rootIndex);
+    }
+    
+    if (resolved.startsWith('/')) resolved = resolved.substring(1);
 
-  if (resolved.startsWith('/')) resolved = resolved.substring(1);
+    if (pages.includes(resolved)) return openPage(resolved);
 
-  const pages = window.projectPages[zipId] || [];
+    let withIndex = resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html';
+    if (pages.includes(withIndex)) return openPage(withIndex);
 
-  function openPage(pagePath) {
-    document.getElementById('pageSelector').value = pagePath;
-    window.switchPreviewPage(pagePath);
-  }
+    let withHtml = resolved.endsWith('.html') ? resolved : resolved + '.html';
+    if (pages.includes(withHtml)) return openPage(withHtml);
 
-  // 1. Точное совпадение
-  if (pages.includes(resolved)) return openPage(resolved);
+    // Жесткий поиск файла по названию (игнорируя структуру папок)
+    let fileName = resolved.split('/').pop();
+    let fallback = pages.find(p => p.endsWith('/' + fileName) || p === fileName || p.endsWith('/' + fileName + '.html') || p.endsWith('/' + fileName + '/index.html'));
 
-  // 2. Ссылка на папку
-  let withIndex = resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html';
-  if (pages.includes(withIndex)) return openPage(withIndex);
+    if (fallback) return openPage(fallback);
 
-  // 3. Без расширения .html
-  let withHtml = resolved.endsWith('.html') ? resolved : resolved + '.html';
-  if (pages.includes(withHtml)) return openPage(withHtml);
-
-  // 4. Умный поиск (обход проблем с корневыми папками архива)
-  let strippedHref = cleanHref.replace(/^\/+/, '');
-  let fallback = pages.find(p =>
-    p === strippedHref ||
-    p.endsWith('/' + strippedHref) ||
-    p === strippedHref + '/index.html' ||
-    p.endsWith('/' + strippedHref + '/index.html') ||
-    p === strippedHref + '.html' ||
-    p.endsWith('/' + strippedHref + '.html')
-  );
-
-  if (fallback) return openPage(fallback);
-
-  alert('Страница не найдена в архиве: ' + href);
+    alert('Страница не найдена в архиве: ' + href);
 };
 
-// Изменение ширины
-window.changeIframeWidth = function (value) {
-  const iframe = document.getElementById('liveIframe');
-  const valDisplay = document.getElementById('widthValue');
-
-  if (value >= 2500) {
-    iframe.style.width = '100%';
-    valDisplay.textContent = '100%';
-  } else {
-    iframe.style.width = value + 'px';
-    valDisplay.textContent = value + 'px';
-  }
+window.changeIframeWidth = function(value) {
+    const iframe = document.getElementById('liveIframe');
+    const valDisplay = document.getElementById('widthValue');
+    if (value >= 2500) { 
+        iframe.style.width = '100%';
+        valDisplay.textContent = '100%';
+    } else {
+        iframe.style.width = value + 'px';
+        valDisplay.textContent = value + 'px';
+    }
 }
 
-// Настоящий полноэкранный режим (на уровне браузера)
-window.toggleFullscreenPreview = function () {
-  const previewModal = document.getElementById('previewModal');
-  const btn = document.getElementById('fullscreenBtn');
-
-  // Проверяем, находимся ли мы уже в полноэкранном режиме
-  if (!document.fullscreenElement) {
-    // Запрашиваем полноэкранный режим для модального окна
-    if (previewModal.requestFullscreen) {
-      previewModal.requestFullscreen();
-    } else if (previewModal.webkitRequestFullscreen) { /* Safari */
-      previewModal.webkitRequestFullscreen();
-    } else if (previewModal.msRequestFullscreen) { /* IE11 */
-      previewModal.msRequestFullscreen();
+window.toggleFullscreenPreview = function() {
+    const previewModal = document.getElementById('previewModal');
+    const btn = document.getElementById('fullscreenBtn');
+    
+    if (!document.fullscreenElement) {
+        if (previewModal.requestFullscreen) previewModal.requestFullscreen();
+        else if (previewModal.webkitRequestFullscreen) previewModal.webkitRequestFullscreen();
+        else if (previewModal.msRequestFullscreen) previewModal.msRequestFullscreen();
+        btn.innerHTML = '🗗 Свернуть';
+    } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        else if (document.msExitFullscreen) document.msExitFullscreen();
+        btn.innerHTML = '⛶ На весь экран';
     }
-    btn.innerHTML = '🗗 Свернуть';
-  } else {
-    // Выходим из полноэкранного режима
-    if (document.exitFullscreen) {
-      document.exitFullscreen();
-    } else if (document.webkitExitFullscreen) { /* Safari */
-      document.webkitExitFullscreen();
-    } else if (document.msExitFullscreen) { /* IE11 */
-      document.msExitFullscreen();
-    }
-    btn.innerHTML = '⛶ На весь экран';
-  }
 }
