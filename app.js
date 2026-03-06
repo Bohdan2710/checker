@@ -109,7 +109,6 @@ function createArchiveSection(fileName, zipId) {
                     <th class="col-canon">Canonical URL</th>
                     <th class="col-href">Hreflangs (Domains)</th>
                     <th class="col-schema">Микроразметка</th>
-                    <th class="col-errors">Ошибки (404)</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -312,56 +311,6 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
     let schemaStatus = schemaParts.length > 0 ? schemaParts.join(' ') : '<span class="badge bg-gray">-</span>';
     const schemaCell = createModalButton(schemaStatus, schemaCodeBlocks.join('\n'), `Schema: ${filePath}`);
 
-    // --- 🔎 ПРОВЕРКА НА БИТЫЕ ИЗОБРАЖЕНИЯ ---
-    const missingImages = new Set();
-    const mediaElements = doc.querySelectorAll('img, source');
-
-    for (let el of mediaElements) {
-      const possibleAttrs = ['src', 'srcset', 'data-src', 'data-lazy-src', 'data-srcset'];
-      
-      for (let attrName of possibleAttrs) {
-        let url = el.getAttribute(attrName);
-        if (!url) continue;
-
-        const urlsToCheck = [];
-        if (attrName.includes('srcset')) {
-            url.split(',').forEach(part => {
-                const clean = part.trim().split(/\s+/)[0]; 
-                if (clean) urlsToCheck.push(clean);
-            });
-        } else {
-            urlsToCheck.push(url.trim());
-        }
-
-        for (let testUrl of urlsToCheck) {
-            if (!testUrl || testUrl.startsWith('http') || testUrl.startsWith('data:') || testUrl.startsWith('//') || testUrl.startsWith('#')) continue;
-            
-            let cleanHref = testUrl.split('?')[0].split('#')[0];
-            let resolved = resolvePath(filePath, cleanHref);
-            
-            if (!getFileFromZip(zipContents, resolved)) {
-                missingImages.add(testUrl);
-            }
-        }
-      }
-    }
-
-    let errorsCellHtml = '<span class="badge bg-success">ОК</span>';
-    
-    if (missingImages.size > 0) {
-        tr.classList.add('row-error'); 
-        const listHtml = Array.from(missingImages)
-            .map(img => `<div class="error-url-item" title="${img}">${img}</div>`)
-            .join('');
-            
-        errorsCellHtml = `
-            <div class="error-cell-container">
-                <div><span class="badge bg-error">Нет фото: ${missingImages.size}</span></div>
-                <div class="error-list">${listHtml}</div>
-            </div>
-        `;
-    }
-
     tr.innerHTML = `
             <td>
                 <strong>${filePath}</strong><br>
@@ -371,7 +320,6 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
             <td>${canonicalCell}</td>
             <td>${hreflangCell}</td>
             <td>${schemaCell}</td>
-            <td>${errorsCellHtml}</td>
         `;
     tbody.appendChild(tr);
   }
