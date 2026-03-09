@@ -524,57 +524,86 @@ async function loadPreviewPage(zipId, filePath) {
   }
 }
 
-// 🧭 УМНАЯ НАВИГАЦИЯ (Ищет файл по всему архиву, если путь сбит)
 window.handleIframeLinkClick = function(zipId, currentFilePath, href) {
-    let cleanHref = href.split('?')[0].split('#')[0];
     const pages = window.projectPages[zipId] || [];
+    let cleanHref = href.split('?')[0].split('#')[0];
 
     function openPage(pagePath) {
-        document.getElementById('pageSelector').value = pagePath;
+        if (document.getElementById('pageSelector')) {
+            document.getElementById('pageSelector').value = pagePath;
+        }
         window.switchPreviewPage(pagePath);
     }
 
-    // 1. Клик по главной
-    if (!cleanHref || cleanHref === '/' || cleanHref === './') {
-        let rootIndex = pages.find(p => p === 'index.html');
-        if (rootIndex) return openPage(rootIndex);
-        cleanHref = 'index.html';
+    if (pages.length === 0) {
+        alert('Страницы не найдены в архиве.');
+        return;
     }
 
-    let resolved = resolvePath(currentFilePath, cleanHref);
-    
-    if (resolved === '' || resolved === 'index.html') {
-        let rootIndex = pages.find(p => p === 'index.html');
-        if (rootIndex) return openPage(rootIndex);
+    // 1. Определение контекста локализации (поиск языковой папки)
+    let currentLangRoot = '';
+    const pathParts = currentFilePath.split('/');
+    if (pathParts.length > 1) {
+        const topFolder = pathParts[0];
+        // Эвристика определения языка: 2-3 символа (en, rus) или наличие дефиса (ru-RU)
+        if (topFolder.length <= 3 || topFolder.includes('-') || ['lang', 'i18n'].includes(topFolder)) {
+            const possibleLangIndex = topFolder + '/index.html';
+            if (pages.includes(possibleLangIndex)) {
+                currentLangRoot = topFolder + '/';
+            }
+        }
     }
-    
-    if (resolved.startsWith('/')) resolved = resolved.substring(1);
 
-    // --- Стратегия 1: Точное совпадение ---
-    if (pages.includes(resolved)) return openPage(resolved);
+    // 2. Обработка клика по логотипу или главной странице (абсолютный корень)
+    if (!cleanHref || cleanHref === '/') {
+        if (currentLangRoot) return openPage(currentLangRoot + 'index.html');
+        const rootIndex = pages.find(p => p.toLowerCase() === 'index.html') || pages[0];
+        return openPage(rootIndex);
+    }
 
-    let withIndex = resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html';
-    if (pages.includes(withIndex)) return openPage(withIndex);
+    // 3. Вычисление точного маршрута
+    let resolved = '';
+    if (cleanHref.startsWith('/')) {
+        // Абсолютный путь от корня архива (без учета локализации)
+        resolved = cleanHref.substring(1);
+    } else {
+        // Относительный путь от текущей директории
+        const baseDir = currentFilePath.includes('/') ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/')) : '';
+        const stack = baseDir ? baseDir.split('/') : [];
+        for (const part of cleanHref.split('/')) {
+            if (part === '.' || part === "") continue;
+            if (part === '..') {
+                if (stack.length > 0) stack.pop();
+            } else {
+                stack.push(part);
+            }
+        }
+        resolved = stack.join('/');
+    }
 
-    let withHtml = resolved.endsWith('.html') ? resolved : resolved + '.html';
-    if (pages.includes(withHtml)) return openPage(withHtml);
+    // 4. Последовательная валидация вариаций пути
+    const searchPaths = [
+        resolved,
+        resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html',
+        resolved + '.html',
+        resolved === '' ? 'index.html' : ''
+    ].filter(Boolean);
 
-    // --- Стратегия 2: Умный поиск (поиск по имени папки/файла) ---
-    // Извлекаем "review" из "./review/"
-    let parts = cleanHref.split('/').filter(p => p && p !== '.' && p !== '..');
-    let targetName = parts.length > 0 ? parts[parts.length - 1] : null;
+    for (let variant of searchPaths) {
+        if (pages.includes(variant)) return openPage(variant);
+    }
+
+    // 5. Поиск по имени файла (глубокий Fallback)
+    const parts = cleanHref.split('/').filter(p => p && p !== '.' && p !== '..');
+    let targetName = parts.length > 0 ? parts[parts.length - 1].replace('.html', '') : null;
 
     if (targetName) {
-        targetName = targetName.replace('.html', ''); 
-
-        let fallback = pages.find(p => {
-            if (p === targetName + '.html') return true;
-            if (p === targetName + '/index.html') return true;
-            if (p.endsWith('/' + targetName + '.html')) return true;
-            if (p.endsWith('/' + targetName + '/index.html')) return true;
-            return false;
-        });
-
+        const fallback = pages.find(p =>
+            p === targetName + '.html' ||
+            p === targetName + '/index.html' ||
+            p.endsWith('/' + targetName + '.html') ||
+            p.endsWith('/' + targetName + '/index.html')
+        );
         if (fallback) return openPage(fallback);
     }
 
