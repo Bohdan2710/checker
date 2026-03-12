@@ -24,7 +24,7 @@ function closePreviewModal() {
   document.getElementById('liveIframe').srcdoc = "";
   window.currentPreviewZip = null;
   if (document.fullscreenElement) {
-      if (document.exitFullscreen) document.exitFullscreen();
+    if (document.exitFullscreen) document.exitFullscreen();
   }
 }
 
@@ -35,6 +35,27 @@ window.openModal = function (id, title) {
 }
 
 fileInput.addEventListener('change', handleFiles);
+
+const uploadArea = document.querySelector('.upload-area');
+
+uploadArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadArea.classList.add('dragover');
+});
+
+uploadArea.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+});
+
+uploadArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    fileInput.files = e.dataTransfer.files;
+    handleFiles({ target: { files: e.dataTransfer.files } });
+  }
+});
 
 async function handleFiles(event) {
   const files = event.target.files;
@@ -74,11 +95,11 @@ async function processZipFile(file) {
 
     const allFilePaths = Object.keys(contents.files);
     const htmlFiles = allFilePaths.filter(path => path.endsWith('.html') && !path.startsWith('__MACOSX'));
-    
+
     window.projectPages[zipId] = htmlFiles;
 
     await checkRootFiles(contents, allFilePaths, rootPanel);
-    await analyzePages(htmlFiles, contents, tableBody, zipId);
+    await analyzePages(htmlFiles, contents, tableBody, zipId, false);
 
   } catch (e) {
     section.querySelector('.archive-content').innerHTML += `<p style="color:red">Ошибка: ${e.message}</p>`;
@@ -88,6 +109,7 @@ async function processZipFile(file) {
 function createArchiveSection(fileName, zipId) {
   const div = document.createElement('div');
   div.className = 'archive-container';
+  div.id = 'container_' + zipId;
   div.innerHTML = `
         <div class="archive-header" onclick="toggleAccordion(this)">
             <span class="archive-title">📂 ${fileName}</span>
@@ -99,6 +121,12 @@ function createArchiveSection(fileName, zipId) {
         <div class="archive-content">
             <h3>1. Корневые файлы (Robots / Sitemap / LLMs)</h3>
             <div class="status-panel"></div>
+
+            <div class="aff-input-container" style="margin-top: 20px; margin-bottom: 20px; display: flex; gap: 10px;">
+                <input type="text" id="affInput_${zipId}" class="aff-input" placeholder="Введите affiliate-ссылку или параметр (например, ?approach=rooli)">
+                <button class="view-code-btn live-preview-btn" style="margin: 0; padding: 0 20px; height: auto;" onclick="recheckAffiliates('${zipId}')">Найти</button>
+            </div>
+
             <h3>2. Анализ страниц</h3>
             <div style="overflow-x:auto;">
                 <table class="report-table">
@@ -109,6 +137,7 @@ function createArchiveSection(fileName, zipId) {
                     <th class="col-canon">Canonical URL</th>
                     <th class="col-href">Hreflangs (Domains)</th>
                     <th class="col-schema">Микроразметка</th>
+                    <th class="col-aff hidden-element" id="aff_th_${zipId}">Affiliate ссылки</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -175,88 +204,91 @@ function createModalButton(statusHtml, codeString, modalTitle) {
 }
 
 function cleanText(text) {
-    if (!text) return text;
-    return text.replace(/^[\uFEFF\u200B]+/, '').replace(/[\uFEFF\u200B]/g, '').trim();
+  if (!text) return text;
+  return text.replace(/^[\uFEFF\u200B]+/, '').replace(/[\uFEFF\u200B]/g, '').trim();
 }
 
 function resolvePath(basePath, relativePath) {
   if (!relativePath) return '';
-  try { relativePath = decodeURIComponent(relativePath); } catch(e) {}
+  try { relativePath = decodeURIComponent(relativePath); } catch (e) { }
 
   if (relativePath.startsWith('http') || relativePath.startsWith('data:') || relativePath.startsWith('//')) return relativePath;
-  if (relativePath.startsWith('/')) return relativePath.substring(1); 
+  if (relativePath.startsWith('/')) return relativePath.substring(1);
 
   const baseDir = basePath.includes('/') ? basePath.substring(0, basePath.lastIndexOf('/')) : '';
   const stack = baseDir ? baseDir.split('/') : [];
   const parts = relativePath.split('/');
-  
+
   for (const part of parts) {
-    if (part === '.' || part === "") continue; 
+    if (part === '.' || part === "") continue;
     if (part === '..') {
-        if (stack.length > 0) stack.pop(); 
+      if (stack.length > 0) stack.pop();
     } else {
-        stack.push(part);
+      stack.push(part);
     }
   }
   return stack.join('/');
 }
 
 function getFileFromZip(zip, path) {
-    if (!path) return null;
+  if (!path) return null;
 
-    let cleanPath = path.split('?')[0].split('#')[0].trim();
-    cleanPath = cleanPath.replace(/\\/g, '/').replace(/\/\//g, '/');
-    if (cleanPath.startsWith('/')) cleanPath = cleanPath.substring(1);
+  let cleanPath = path.split('?')[0].split('#')[0].trim();
+  cleanPath = cleanPath.replace(/\\/g, '/').replace(/\/\//g, '/');
+  if (cleanPath.startsWith('/')) cleanPath = cleanPath.substring(1);
 
-    let decodedPath = cleanPath;
-    try { decodedPath = decodeURIComponent(cleanPath); } catch(e) {}
+  let decodedPath = cleanPath;
+  try { decodedPath = decodeURIComponent(cleanPath); } catch (e) { }
 
-    let encodedPath = cleanPath;
-    try { encodedPath = encodeURI(decodedPath); } catch(e) {}
+  let encodedPath = cleanPath;
+  try { encodedPath = encodeURI(decodedPath); } catch (e) { }
 
-    const pathsToTry = [cleanPath, decodedPath, encodedPath];
+  const pathsToTry = [cleanPath, decodedPath, encodedPath];
 
+  for (let p of pathsToTry) {
+    if (zip.file(p)) return zip.file(p);
+  }
+
+  const allFiles = Object.keys(zip.files);
+
+  for (let f of allFiles) {
     for (let p of pathsToTry) {
-        if (zip.file(p)) return zip.file(p);
+      if (f.endsWith('/' + p)) return zip.file(f);
     }
+  }
 
-    const allFiles = Object.keys(zip.files);
+  let fileNamesToTry = pathsToTry.map(p => p.split('/').pop()).filter(Boolean);
 
+  if (fileNamesToTry.length > 0) {
     for (let f of allFiles) {
-        for (let p of pathsToTry) {
-            if (f.endsWith('/' + p)) return zip.file(f);
+      let currentZipFileName = f.split('/').pop();
+      let decodedZipName = currentZipFileName;
+      try { decodedZipName = decodeURIComponent(currentZipFileName); } catch (e) { }
+
+      for (let name of fileNamesToTry) {
+        let decodedName = name;
+        try { decodedName = decodeURIComponent(name); } catch (e) { }
+
+        if (currentZipFileName === name || decodedZipName === decodedName) {
+          return zip.file(f);
         }
+      }
     }
-
-    let fileNamesToTry = pathsToTry.map(p => p.split('/').pop()).filter(Boolean);
-
-    if (fileNamesToTry.length > 0) {
-        for (let f of allFiles) {
-            let currentZipFileName = f.split('/').pop();
-            let decodedZipName = currentZipFileName;
-            try { decodedZipName = decodeURIComponent(currentZipFileName); } catch(e) {}
-
-            for (let name of fileNamesToTry) {
-                let decodedName = name;
-                try { decodedName = decodeURIComponent(name); } catch(e) {}
-
-                if (currentZipFileName === name || decodedZipName === decodedName) {
-                    return zip.file(f);
-                }
-            }
-        }
-    }
-    return null;
+  }
+  return null;
 }
 
-async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
+async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = false) {
   const parser = new DOMParser();
   htmlFiles.sort();
 
   for (const filePath of htmlFiles) {
     let fileData = await zipContents.file(filePath).async("string");
-    fileData = cleanText(fileData); 
-    
+    fileData = cleanText(fileData);
+
+    const codeId = 'fullcode_' + Math.random().toString(36).substr(2, 9);
+    window.codeStorage[codeId] = fileData;
+
     const doc = parser.parseFromString(fileData, "text/html");
     const tr = document.createElement('tr');
 
@@ -311,17 +343,98 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId) {
     let schemaStatus = schemaParts.length > 0 ? schemaParts.join(' ') : '<span class="badge bg-gray">-</span>';
     const schemaCell = createModalButton(schemaStatus, schemaCodeBlocks.join('\n'), `Schema: ${filePath}`);
 
+    let affDisplay = '<span class="badge bg-gray">Нет</span>';
+    let affCode = '';
+    let affCellClass = isRecheck ? '' : 'hidden-element';
+
+    if (isRecheck) {
+      const affInputEl = document.getElementById('affInput_' + zipId);
+      const customAffLink = affInputEl ? affInputEl.value.trim() : '';
+
+      if (customAffLink !== '') {
+        const links = Array.from(doc.querySelectorAll('a[href]'));
+        let exactMatches = [];
+        let similarMatches = [];
+
+        const affiliateRegex = /(ref|aff|partner|click_id|subid|approach)=|utm_/i;
+        const customBase = customAffLink.includes('?') ? customAffLink.split('?')[0] : customAffLink;
+
+        links.forEach(a => {
+          const href = a.getAttribute('href');
+          if (!href) return;
+
+          if (href === customAffLink) {
+            exactMatches.push(href);
+          } else {
+            let isSimilar = false;
+
+            // 1. Поиск точного совпадения части строки
+            if (href.includes(customAffLink)) {
+              isSimilar = true;
+            }
+            // 2. Поиск по одинаковому базовому домену/пути (игнорируя разницу в ?параметрах)
+            else if (customBase.length > 5 && href.startsWith(customBase)) {
+              isSimilar = true;
+            }
+            // 3. Глобальный поиск любых других аффилейт-ссылок на странице
+            else if (affiliateRegex.test(href)) {
+              isSimilar = true;
+            }
+
+            if (isSimilar) {
+              similarMatches.push(href);
+            }
+          }
+        });
+
+        if (exactMatches.length > 0 || similarMatches.length > 0) {
+          affCode = [...exactMatches, ...similarMatches].join('\n');
+          let badges = [];
+          if (exactMatches.length > 0) badges.push(`<span class="badge bg-success-aff">Точно: ${exactMatches.length}</span>`);
+          if (similarMatches.length > 0) badges.push(`<span class="badge bg-danger-aff">Нужно проверить!: ${similarMatches.length}</span>`);
+          affDisplay = badges.join(' ');
+        }
+      }
+    }
+    const affCell = createModalButton(affDisplay, affCode, `Affiliate ссылки: ${filePath}`);
+
     tr.innerHTML = `
             <td>
                 <strong>${filePath}</strong><br>
-                <button class="view-code-btn live-preview-btn" onclick="openProjectPreview('${zipId}', '${filePath}')">🌐 Live Preview</button>
+                <button class="view-code-btn live-preview-btn" onclick="openProjectPreview('${zipId}', '${filePath}')">🌐 Preview</button>
+                <button class="view-code-btn" onclick="openModal('${codeId}', 'Исходный код: ${filePath}')">👁 Код</button>
             </td>
             <td>${metaHtml}</td>
             <td>${canonicalCell}</td>
             <td>${hreflangCell}</td>
             <td>${schemaCell}</td>
+            <td class="${affCellClass}">${affCell}</td>
         `;
     tbody.appendChild(tr);
+  }
+}
+
+async function recheckAffiliates(zipId) {
+  const inputEl = document.getElementById('affInput_' + zipId);
+  if (!inputEl || inputEl.value.trim() === '') {
+    alert('Сначала введите ссылку или параметр для поиска.');
+    return;
+  }
+
+  const thEl = document.getElementById('aff_th_' + zipId);
+  if (thEl) thEl.classList.remove('hidden-element');
+
+  const container = document.getElementById('container_' + zipId);
+  if (!container) return;
+
+  const tbody = container.querySelector('tbody');
+  tbody.innerHTML = '';
+
+  const zipContents = window.zipStorage[zipId];
+  const htmlFiles = window.projectPages[zipId];
+
+  if (zipContents && htmlFiles) {
+    await analyzePages(htmlFiles, zipContents, tbody, zipId, true);
   }
 }
 
@@ -332,19 +445,19 @@ async function replaceCssUrls(cssText, cssPath, zip) {
   for (const match of matches) {
     const originalUrl = match[2];
     const resolvedAssetPath = resolvePath(cssPath, originalUrl);
-    
+
     const fileEntry = getFileFromZip(zip, resolvedAssetPath);
 
     if (fileEntry) {
       const base64 = await fileEntry.async("base64");
       const cleanPathForExt = resolvedAssetPath.split('?')[0].split('#')[0];
       const ext = cleanPathForExt.split('.').pop().toLowerCase();
-      let mime = 'application/octet-stream'; 
-      
+      let mime = 'application/octet-stream';
+
       if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif'].includes(ext)) {
-          mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+        mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
       } else if (['woff2', 'woff', 'ttf', 'otf', 'eot'].includes(ext)) {
-          mime = `font/${ext}`;
+        mime = `font/${ext}`;
       }
 
       const dataUrl = `data:${mime};base64,${base64}`;
@@ -356,38 +469,38 @@ async function replaceCssUrls(cssText, cssPath, zip) {
   return cssText;
 }
 
-window.openProjectPreview = function(zipId, startFilePath = null) {
+window.openProjectPreview = function (zipId, startFilePath = null) {
   window.currentPreviewZip = zipId;
   const pages = window.projectPages[zipId] || [];
-  
+
   if (pages.length === 0) return alert('HTML файлы не найдены в архиве.');
 
   const selector = document.getElementById('pageSelector');
   selector.innerHTML = '';
   pages.forEach(page => {
-      const opt = document.createElement('option');
-      opt.value = page;
-      opt.textContent = page;
-      selector.appendChild(opt);
+    const opt = document.createElement('option');
+    opt.value = page;
+    opt.textContent = page;
+    selector.appendChild(opt);
   });
 
   let targetPage = startFilePath;
   if (!targetPage || !pages.includes(targetPage)) {
-      targetPage = pages.find(p => p.toLowerCase().endsWith('index.html')) || pages[0];
+    targetPage = pages.find(p => p.toLowerCase().endsWith('index.html')) || pages[0];
   }
-  
+
   selector.value = targetPage;
-  
+
   document.getElementById('previewModal').style.display = 'block';
   document.getElementById('widthSlider').value = 2500;
   changeIframeWidth(2500);
-  
+
   loadPreviewPage(zipId, targetPage);
 };
 
-window.switchPreviewPage = function(filePath) {
+window.switchPreviewPage = function (filePath) {
   if (window.currentPreviewZip) {
-      loadPreviewPage(window.currentPreviewZip, filePath);
+    loadPreviewPage(window.currentPreviewZip, filePath);
   }
 };
 
@@ -400,8 +513,8 @@ async function loadPreviewPage(zipId, filePath) {
 
   try {
     let fileData = await zip.file(filePath).async("string");
-    fileData = cleanText(fileData); 
-    
+    fileData = cleanText(fileData);
+
     const parser = new DOMParser();
     const doc = parser.parseFromString(fileData, "text/html");
 
@@ -414,10 +527,10 @@ async function loadPreviewPage(zipId, filePath) {
       if (href && !href.startsWith('http') && !href.startsWith('//')) {
         const resolved = resolvePath(filePath, href.split('?')[0]);
         const fileEntry = getFileFromZip(zip, resolved);
-        
+
         if (fileEntry) {
           let cssText = await fileEntry.async("string");
-          cssText = cleanText(cssText); 
+          cssText = cleanText(cssText);
           cssText = await replaceCssUrls(cssText, resolved, zip);
           const style = doc.createElement('style');
           style.textContent = cssText;
@@ -447,11 +560,11 @@ async function loadPreviewPage(zipId, filePath) {
       ['srcset', 'data-srcset', 'sizes'].forEach(attr => el.removeAttribute(attr));
 
       let url = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src');
-      
+
       if (url && !url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('//')) {
         const resolved = resolvePath(filePath, url.split('?')[0].trim());
         const fileEntry = getFileFromZip(zip, resolved);
-        
+
         if (fileEntry) {
           const base64 = await fileEntry.async("base64");
           const ext = resolved.split('.').pop().toLowerCase();
@@ -463,14 +576,9 @@ async function loadPreviewPage(zipId, filePath) {
           else if (ext === 'avif') mime = 'image/avif';
 
           el.setAttribute('src', `data:${mime};base64,${base64}`);
-          
+
           el.removeAttribute('data-src');
           el.removeAttribute('data-lazy-src');
-        } else {
-          const svgPlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" style="background:%23ffeaea"><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12px" fill="%23dc3545">Нет фото</text></svg>`;
-          el.setAttribute('src', svgPlaceholder);
-          el.style.border = '1px dashed #dc3545';
-          console.warn(`[Media] Не найден: ${resolved}`);
         }
       }
     }
@@ -478,14 +586,14 @@ async function loadPreviewPage(zipId, filePath) {
     const scripts = Array.from(doc.querySelectorAll('script'));
     for (let script of scripts) {
       const src = script.getAttribute('src');
-      
+
       if (src && !src.startsWith('http') && !src.startsWith('//')) {
         const resolved = resolvePath(filePath, src.split('?')[0]);
         const fileEntry = getFileFromZip(zip, resolved);
-        
+
         if (fileEntry) {
           let jsText = await fileEntry.async("string");
-          jsText = cleanText(jsText); 
+          jsText = cleanText(jsText);
           const base64Js = btoa(unescape(encodeURIComponent(jsText)));
           script.setAttribute('src', `data:text/javascript;base64,${base64Js}`);
         } else {
@@ -505,7 +613,7 @@ async function loadPreviewPage(zipId, filePath) {
               const href = a.getAttribute('href');
               if (!href || href.startsWith('http') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
               if (href.startsWith('#')) return; 
-              
+
               e.preventDefault();
               e.stopPropagation(); 
               window.parent.handleIframeLinkClick('${zipId}', '${filePath}', href);
@@ -513,7 +621,7 @@ async function loadPreviewPage(zipId, filePath) {
       }, true);
       document.addEventListener('submit', function(e) { e.preventDefault(); e.stopPropagation(); }, true);
     `;
-    
+
     if (doc.head) doc.head.appendChild(interceptScript);
     else doc.documentElement.appendChild(interceptScript);
 
@@ -524,117 +632,109 @@ async function loadPreviewPage(zipId, filePath) {
   }
 }
 
-window.handleIframeLinkClick = function(zipId, currentFilePath, href) {
-    const pages = window.projectPages[zipId] || [];
-    let cleanHref = href.split('?')[0].split('#')[0];
+window.handleIframeLinkClick = function (zipId, currentFilePath, href) {
+  const pages = window.projectPages[zipId] || [];
+  let cleanHref = href.split('?')[0].split('#')[0];
 
-    function openPage(pagePath) {
-        if (document.getElementById('pageSelector')) {
-            document.getElementById('pageSelector').value = pagePath;
-        }
-        window.switchPreviewPage(pagePath);
+  function openPage(pagePath) {
+    if (document.getElementById('pageSelector')) {
+      document.getElementById('pageSelector').value = pagePath;
     }
+    window.switchPreviewPage(pagePath);
+  }
 
-    if (pages.length === 0) {
-        alert('Страницы не найдены в архиве.');
-        return;
+  if (pages.length === 0) {
+    alert('Страницы не найдены в архиве.');
+    return;
+  }
+
+  let currentLangRoot = '';
+  const pathParts = currentFilePath.split('/');
+  if (pathParts.length > 1) {
+    const topFolder = pathParts[0];
+    if (topFolder.length <= 3 || topFolder.includes('-') || ['lang', 'i18n'].includes(topFolder)) {
+      const possibleLangIndex = topFolder + '/index.html';
+      if (pages.includes(possibleLangIndex)) {
+        currentLangRoot = topFolder + '/';
+      }
     }
+  }
 
-    // 1. Определение контекста локализации (поиск языковой папки)
-    let currentLangRoot = '';
-    const pathParts = currentFilePath.split('/');
-    if (pathParts.length > 1) {
-        const topFolder = pathParts[0];
-        // Эвристика определения языка: 2-3 символа (en, rus) или наличие дефиса (ru-RU)
-        if (topFolder.length <= 3 || topFolder.includes('-') || ['lang', 'i18n'].includes(topFolder)) {
-            const possibleLangIndex = topFolder + '/index.html';
-            if (pages.includes(possibleLangIndex)) {
-                currentLangRoot = topFolder + '/';
-            }
-        }
+  if (!cleanHref || cleanHref === '/') {
+    if (currentLangRoot) return openPage(currentLangRoot + 'index.html');
+    const rootIndex = pages.find(p => p.toLowerCase() === 'index.html') || pages[0];
+    return openPage(rootIndex);
+  }
+
+  let resolved = '';
+  if (cleanHref.startsWith('/')) {
+    resolved = cleanHref.substring(1);
+  } else {
+    const baseDir = currentFilePath.includes('/') ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/')) : '';
+    const stack = baseDir ? baseDir.split('/') : [];
+    for (const part of cleanHref.split('/')) {
+      if (part === '.' || part === "") continue;
+      if (part === '..') {
+        if (stack.length > 0) stack.pop();
+      } else {
+        stack.push(part);
+      }
     }
+    resolved = stack.join('/');
+  }
 
-    // 2. Обработка клика по логотипу или главной странице (абсолютный корень)
-    if (!cleanHref || cleanHref === '/') {
-        if (currentLangRoot) return openPage(currentLangRoot + 'index.html');
-        const rootIndex = pages.find(p => p.toLowerCase() === 'index.html') || pages[0];
-        return openPage(rootIndex);
-    }
+  const searchPaths = [
+    resolved,
+    resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html',
+    resolved + '.html',
+    resolved === '' ? 'index.html' : ''
+  ].filter(Boolean);
 
-    // 3. Вычисление точного маршрута
-    let resolved = '';
-    if (cleanHref.startsWith('/')) {
-        // Абсолютный путь от корня архива (без учета локализации)
-        resolved = cleanHref.substring(1);
-    } else {
-        // Относительный путь от текущей директории
-        const baseDir = currentFilePath.includes('/') ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/')) : '';
-        const stack = baseDir ? baseDir.split('/') : [];
-        for (const part of cleanHref.split('/')) {
-            if (part === '.' || part === "") continue;
-            if (part === '..') {
-                if (stack.length > 0) stack.pop();
-            } else {
-                stack.push(part);
-            }
-        }
-        resolved = stack.join('/');
-    }
+  for (let variant of searchPaths) {
+    if (pages.includes(variant)) return openPage(variant);
+  }
 
-    // 4. Последовательная валидация вариаций пути
-    const searchPaths = [
-        resolved,
-        resolved.endsWith('/') ? resolved + 'index.html' : resolved + '/index.html',
-        resolved + '.html',
-        resolved === '' ? 'index.html' : ''
-    ].filter(Boolean);
+  const parts = cleanHref.split('/').filter(p => p && p !== '.' && p !== '..');
+  let targetName = parts.length > 0 ? parts[parts.length - 1].replace('.html', '') : null;
 
-    for (let variant of searchPaths) {
-        if (pages.includes(variant)) return openPage(variant);
-    }
+  if (targetName) {
+    const fallback = pages.find(p =>
+      p === targetName + '.html' ||
+      p === targetName + '/index.html' ||
+      p.endsWith('/' + targetName + '.html') ||
+      p.endsWith('/' + targetName + '/index.html')
+    );
+    if (fallback) return openPage(fallback);
+  }
 
-    // 5. Поиск по имени файла (глубокий Fallback)
-    const parts = cleanHref.split('/').filter(p => p && p !== '.' && p !== '..');
-    let targetName = parts.length > 0 ? parts[parts.length - 1].replace('.html', '') : null;
-
-    if (targetName) {
-        const fallback = pages.find(p =>
-            p === targetName + '.html' ||
-            p === targetName + '/index.html' ||
-            p.endsWith('/' + targetName + '.html') ||
-            p.endsWith('/' + targetName + '/index.html')
-        );
-        if (fallback) return openPage(fallback);
-    }
-
-    alert('Страница не найдена в архиве: ' + href);
+  alert('Страница не найдена в архиве: ' + href);
 };
 
-window.changeIframeWidth = function(value) {
-    const iframe = document.getElementById('liveIframe');
-    const valDisplay = document.getElementById('widthValue');
-    if (value >= 2500) { 
-        iframe.style.width = '100%';
-        valDisplay.textContent = '100%';
-    } else {
-        iframe.style.width = value + 'px';
-        valDisplay.textContent = value + 'px';
-    }
+window.changeIframeWidth = function (value) {
+  const iframe = document.getElementById('liveIframe');
+  const valDisplay = document.getElementById('widthValue');
+  if (value >= 2500) {
+    iframe.style.width = '100%';
+    valDisplay.textContent = '100%';
+  } else {
+    iframe.style.width = value + 'px';
+    valDisplay.textContent = value + 'px';
+  }
 }
 
-window.toggleFullscreenPreview = function() {
-    const previewModal = document.getElementById('previewModal');
-    const btn = document.getElementById('fullscreenBtn');
-    
-    if (!document.fullscreenElement) {
-        if (previewModal.requestFullscreen) previewModal.requestFullscreen();
-        else if (previewModal.webkitRequestFullscreen) previewModal.webkitRequestFullscreen();
-        else if (previewModal.msRequestFullscreen) previewModal.msRequestFullscreen();
-        btn.innerHTML = '🗗 Свернуть';
-    } else {
-        if (document.exitFullscreen) document.exitFullscreen();
-        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-        else if (document.msExitFullscreen) document.msExitFullscreen();
-        btn.innerHTML = '⛶ На весь экран';
-    }
+window.toggleFullscreenPreview = function () {
+  const previewModal = document.getElementById('previewModal');
+  const btn = document.getElementById('fullscreenBtn');
+
+  if (!document.fullscreenElement) {
+    if (previewModal.requestFullscreen) previewModal.requestFullscreen();
+    else if (previewModal.webkitRequestFullscreen) previewModal.webkitRequestFullscreen();
+    else if (previewModal.msRequestFullscreen) previewModal.msRequestFullscreen();
+    btn.innerHTML = '🗗 Свернуть';
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    else if (document.msExitFullscreen) document.msExitFullscreen();
+    btn.innerHTML = '⛶ На весь экран';
+  }
 }

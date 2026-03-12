@@ -23,7 +23,6 @@ h1 {
   margin-bottom: 20px;
 }
 
-/* Upload Area */
 .upload-area {
   background: var(--card-bg);
   border: 2px dashed var(--primary);
@@ -43,7 +42,6 @@ h1 {
   display: none;
 }
 
-/* Archive Accordion */
 .archive-container {
   margin-bottom: 20px;
   background: var(--card-bg);
@@ -113,7 +111,6 @@ h1 {
   }
 }
 
-/* Status & Table */
 .status-panel {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -174,19 +171,23 @@ h1 {
 }
 
 .col-meta {
-  width: 20%;
+  width: 17%;
 }
 
 .col-canon {
-  width: 20%;
+  width: 17%;
 }
 
 .col-href {
-  width: 25%;
-}
-.col-errors,
-.col-schema {
   width: 20%;
+}
+
+.col-schema {
+  width: 15%;
+}
+
+.col-aff {
+  width: 16%;
 }
 
 .url-text {
@@ -288,7 +289,6 @@ h1 {
   color: var(--primary);
 }
 
-/* --- MODAL STYLES --- */
 .modal-overlay {
   display: none;
   position: fixed;
@@ -396,7 +396,6 @@ pre.code-block {
   word-break: break-all;
 }
 
-/* Device Toolbar & Controls */
 .device-toolbar {
   background: #333;
   padding: 10px 15px;
@@ -491,11 +490,8 @@ pre.code-block {
   color: #333;
 }
 
-/* --- СТИЛИ ДЛЯ ОШИБОК ИЗОБРАЖЕНИЙ --- */
-
-/* Подсветка всей строки с ошибкой */
 tr.row-error {
-  background-color: #fff5f5; /* Легкий красный фон */
+  background-color: #fff5f5;
 }
 
 tr.row-error td {
@@ -506,14 +502,12 @@ tr.row-error:hover {
   background-color: #ffebeb;
 }
 
-/* Контейнер ячейки ошибок */
 .error-cell-container {
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-/* Список битых ссылок */
 .error-list {
   max-height: 100px;
   overflow-y: auto;
@@ -523,7 +517,6 @@ tr.row-error:hover {
   padding: 4px;
 }
 
-/* Элемент битой ссылки */
 .error-url-item {
   font-family: Consolas, Monaco, monospace;
   color: var(--error);
@@ -538,7 +531,6 @@ tr.row-error:hover {
   border-bottom: none;
 }
 
-/* Кастомный тонкий скроллбар для списка ошибок */
 .error-list::-webkit-scrollbar {
   width: 6px;
 }
@@ -555,4 +547,43 @@ tr.row-error:hover {
 
 .error-list::-webkit-scrollbar-thumb:hover {
   background-color: var(--error);
+}
+
+.aff-input-container {
+  margin-bottom: 20px;
+}
+
+.aff-input {
+  width: 100%;
+  padding: 12px 15px;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.3s ease;
+  box-sizing: border-box;
+}
+
+.aff-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.hidden-element {
+  display: none !important;
+}
+
+.bg-success-aff {
+  background-color: #28a745;
+  color: white;
+}
+
+.bg-danger-aff {
+  background-color: #dc3545;
+  color: white;
+}
+
+.upload-area.dragover {
+  background-color: #eef5ff;
+  border-color: #0056b3;
+  border-style: solid;
 }
