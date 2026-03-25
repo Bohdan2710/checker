@@ -137,6 +137,7 @@ function createArchiveSection(fileName, zipId) {
                     <th class="col-canon">Canonical URL</th>
                     <th class="col-href">Hreflangs (Domains)</th>
                     <th class="col-schema">Микроразметка</th>
+                    <th class="col-words">Слов в &lt;main&gt;</th>
                     <th class="col-aff hidden-element" id="aff_th_${zipId}">Affiliate ссылки</th>
                     </tr>
                 </thead>
@@ -343,6 +344,49 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
     let schemaStatus = schemaParts.length > 0 ? schemaParts.join(' ') : '<span class="badge bg-gray">-</span>';
     const schemaCell = createModalButton(schemaStatus, schemaCodeBlocks.join('\n'), `Schema: ${filePath}`);
 
+   // --- Идеальная логика подсчета слов в <main> ---
+    const mainTag = doc.querySelector('main');
+    let wordsDisplay = '<span class="badge bg-gray">Нет &lt;main&gt;</span>';
+
+    if (mainTag) {
+      // Функция берет ТОЛЬКО видимый текст, игнорируя все атрибуты (alt, src)
+      function getVisibleText(node) {
+        if (node.nodeType === 3) {
+          return node.nodeValue + ' ';
+        }
+        if (node.nodeType === 1) {
+          // ИЗМЕНЕНИЕ: Добавлены элементы форм и кнопки в список игнорируемых тегов
+          const ignoreTags = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'IMG', 'PICTURE', 'SVG', 'VIDEO', 'AUDIO', 'IFRAME', 'FORM', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'LABEL', 'FIELDSET'];
+          
+          if (ignoreTags.includes(node.tagName.toUpperCase())) {
+            return ' ';
+          }
+          
+          let text = ' ';
+          for (let child of node.childNodes) {
+            text += getVisibleText(child);
+          }
+          
+          const blockTags = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'TR', 'BR', 'HEADER', 'FOOTER', 'SECTION', 'ARTICLE', 'UL', 'OL'];
+          if (blockTags.includes(node.tagName.toUpperCase())) {
+            text += ' ';
+          }
+          return text;
+        }
+        return ' ';
+      }
+
+      let cleanText = getVisibleText(mainTag);
+
+      // Умный поиск слов:
+      const wordsArray = cleanText.match(/[\p{L}\p{N}]+(?:[-'’\/][\p{L}\p{N}]+)*/gu) || [];
+      
+      const wordsCount = wordsArray.length;
+
+      let badgeClass = wordsCount > 0 ? 'bg-info' : 'bg-warning';
+      wordsDisplay = `<span class="badge ${badgeClass}">${wordsCount}</span>`;
+    }
+    // -------------------------------------
     let affDisplay = '<span class="badge bg-gray">Нет</span>';
     let affCode = '';
     let affCellClass = isRecheck ? '' : 'hidden-element';
@@ -368,15 +412,12 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
           } else {
             let isSimilar = false;
 
-            // 1. Поиск точного совпадения части строки
             if (href.includes(customAffLink)) {
               isSimilar = true;
             }
-            // 2. Поиск по одинаковому базовому домену/пути (игнорируя разницу в ?параметрах)
             else if (customBase.length > 5 && href.startsWith(customBase)) {
               isSimilar = true;
             }
-            // 3. Глобальный поиск любых других аффилейт-ссылок на странице
             else if (affiliateRegex.test(href)) {
               isSimilar = true;
             }
@@ -408,6 +449,7 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
             <td>${canonicalCell}</td>
             <td>${hreflangCell}</td>
             <td>${schemaCell}</td>
+            <td>${wordsDisplay}</td>
             <td class="${affCellClass}">${affCell}</td>
         `;
     tbody.appendChild(tr);

@@ -166,28 +166,33 @@ h1 {
   font-weight: 600;
 }
 
+/* Обновленные ширины колонок */
 .col-file {
-  width: 15%;
+  width: 14%;
 }
 
 .col-meta {
-  width: 17%;
+  width: 16%;
 }
 
 .col-canon {
-  width: 17%;
+  width: 14%;
 }
 
 .col-href {
-  width: 20%;
+  width: 16%;
 }
 
 .col-schema {
-  width: 15%;
+  width: 12%;
+}
+
+.col-words {
+  width: 10%;
 }
 
 .col-aff {
-  width: 16%;
+  width: 18%;
 }
 
 .url-text {
