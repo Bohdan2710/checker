@@ -241,41 +241,31 @@ function getFileFromZip(zip, path) {
   let decodedPath = cleanPath;
   try { decodedPath = decodeURIComponent(cleanPath); } catch (e) { }
 
-  let encodedPath = cleanPath;
-  try { encodedPath = encodeURI(decodedPath); } catch (e) { }
+  const lowerClean = cleanPath.toLowerCase();
+  const lowerDecoded = decodedPath.toLowerCase();
+  const fileName = lowerDecoded.split('/').pop();
 
-  const pathsToTry = [cleanPath, decodedPath, encodedPath];
+  // ВАЖНО: Полностью игнорируем скрытые системные папки и файлы Mac
+  const allFiles = Object.keys(zip.files).filter(f => !f.includes('__MACOSX') && !f.includes('/._') && !zip.files[f].dir);
 
-  for (let p of pathsToTry) {
-    if (zip.file(p)) return zip.file(p);
-  }
-
-  const allFiles = Object.keys(zip.files);
-
+  // Шаг 1: Ищем точное совпадение пути (без учета регистра)
   for (let f of allFiles) {
-    for (let p of pathsToTry) {
-      if (f.endsWith('/' + p)) return zip.file(f);
+    const fLower = f.toLowerCase();
+    if (fLower === lowerClean || fLower === lowerDecoded || fLower.endsWith('/' + lowerClean) || fLower.endsWith('/' + lowerDecoded)) {
+      return zip.file(f);
     }
   }
 
-  let fileNamesToTry = pathsToTry.map(p => p.split('/').pop()).filter(Boolean);
-
-  if (fileNamesToTry.length > 0) {
+  // Шаг 2: Умный фолбэк (Fallback)
+  // Если по точному пути не нашли, просто ищем любой файл с таким именем (shape1.webp) в любой папке архива
+  if (fileName) {
     for (let f of allFiles) {
-      let currentZipFileName = f.split('/').pop();
-      let decodedZipName = currentZipFileName;
-      try { decodedZipName = decodeURIComponent(currentZipFileName); } catch (e) { }
-
-      for (let name of fileNamesToTry) {
-        let decodedName = name;
-        try { decodedName = decodeURIComponent(name); } catch (e) { }
-
-        if (currentZipFileName === name || decodedZipName === decodedName) {
-          return zip.file(f);
-        }
+      if (f.split('/').pop().toLowerCase() === fileName) {
+        return zip.file(f); // Берем первый попавшийся файл с таким именем
       }
     }
   }
+
   return null;
 }
 
@@ -344,7 +334,7 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
     let schemaStatus = schemaParts.length > 0 ? schemaParts.join(' ') : '<span class="badge bg-gray">-</span>';
     const schemaCell = createModalButton(schemaStatus, schemaCodeBlocks.join('\n'), `Schema: ${filePath}`);
 
-   // --- Идеальная логика подсчета слов в <main> ---
+    // --- Идеальная логика подсчета слов в <main> ---
     const mainTag = doc.querySelector('main');
     let wordsDisplay = '<span class="badge bg-gray">Нет &lt;main&gt;</span>';
 
@@ -357,16 +347,16 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
         if (node.nodeType === 1) {
           // ИЗМЕНЕНИЕ: Добавлены элементы форм и кнопки в список игнорируемых тегов
           const ignoreTags = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'IMG', 'PICTURE', 'SVG', 'VIDEO', 'AUDIO', 'IFRAME', 'FORM', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'LABEL', 'FIELDSET'];
-          
+
           if (ignoreTags.includes(node.tagName.toUpperCase())) {
             return ' ';
           }
-          
+
           let text = ' ';
           for (let child of node.childNodes) {
             text += getVisibleText(child);
           }
-          
+
           const blockTags = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'TR', 'BR', 'HEADER', 'FOOTER', 'SECTION', 'ARTICLE', 'UL', 'OL'];
           if (blockTags.includes(node.tagName.toUpperCase())) {
             text += ' ';
@@ -380,7 +370,7 @@ async function analyzePages(htmlFiles, zipContents, tbody, zipId, isRecheck = fa
 
       // Умный поиск слов:
       const wordsArray = cleanText.match(/[\p{L}\p{N}]+(?:[-'’\/][\p{L}\p{N}]+)*/gu) || [];
-      
+
       const wordsCount = wordsArray.length;
 
       let badgeClass = wordsCount > 0 ? 'bg-info' : 'bg-warning';
@@ -599,12 +589,17 @@ async function loadPreviewPage(zipId, filePath) {
 
     const mediaElements = doc.querySelectorAll('img, source');
     for (let el of mediaElements) {
-      ['srcset', 'data-srcset', 'sizes'].forEach(attr => el.removeAttribute(attr));
-
-      let url = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src');
+      // Ищем реальный путь: сначала data-атрибуты, затем src/srcset
+      let url = el.getAttribute('data-src') ||
+        el.getAttribute('data-lazy-src') ||
+        el.getAttribute('srcset') ||
+        el.getAttribute('data-srcset') ||
+        el.getAttribute('src');
 
       if (url && !url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('//')) {
-        const resolved = resolvePath(filePath, url.split('?')[0].trim());
+        // Если это srcset, берем только первый URL до пробела
+        let cleanUrl = url.split(',')[0].split(' ')[0].trim();
+        const resolved = resolvePath(filePath, cleanUrl.split('?')[0].trim());
         const fileEntry = getFileFromZip(zip, resolved);
 
         if (fileEntry) {
@@ -617,10 +612,17 @@ async function loadPreviewPage(zipId, filePath) {
           else if (ext === 'webp') mime = 'image/webp';
           else if (ext === 'avif') mime = 'image/avif';
 
-          el.setAttribute('src', `data:${mime};base64,${base64}`);
+          const dataUri = `data:${mime};base64,${base64}`;
 
-          el.removeAttribute('data-src');
-          el.removeAttribute('data-lazy-src');
+          if (el.tagName.toLowerCase() === 'source') {
+            el.setAttribute('srcset', dataUri);
+          } else {
+            el.setAttribute('src', dataUri);
+          }
+
+          // Удаляем старые атрибуты, чтобы браузер не пытался грузить 404
+          ['data-src', 'data-lazy-src', 'data-srcset', 'sizes'].forEach(attr => el.removeAttribute(attr));
+          if (el.tagName.toLowerCase() !== 'source') el.removeAttribute('srcset');
         }
       }
     }
@@ -649,6 +651,7 @@ async function loadPreviewPage(zipId, filePath) {
 
     const interceptScript = doc.createElement('script');
     interceptScript.textContent = `
+      // Перехват кликов по ссылкам
       document.addEventListener('click', function(e) {
           const a = e.target.closest('a');
           if (a) {
@@ -662,6 +665,42 @@ async function loadPreviewPage(zipId, filePath) {
           }
       }, true);
       document.addEventListener('submit', function(e) { e.preventDefault(); e.stopPropagation(); }, true);
+
+      // Магия: Фикс динамически добавленных картинок (Parallax, React/Vue Hydration)
+      const observer = new MutationObserver(mutations => {
+          mutations.forEach(m => {
+              // Если скрипт добавил новый тег <img>
+              if (m.type === 'childList') {
+                  m.addedNodes.forEach(node => {
+                      if (node.nodeType === 1) { 
+                          const imgs = node.tagName === 'IMG' ? [node] : Array.from(node.querySelectorAll('img'));
+                          imgs.forEach(img => fixDynamicImage(img));
+                      }
+                  });
+              } 
+              // Если скрипт перезаписал src у существующей картинки
+              else if (m.type === 'attributes' && m.attributeName === 'src') {
+                  fixDynamicImage(m.target);
+              }
+          });
+      });
+
+      function fixDynamicImage(img) {
+          const src = img.getAttribute('src');
+          if (src && !src.startsWith('data:') && !src.startsWith('http') && !src.startsWith('//') && !src.startsWith('blob:')) {
+              window.parent.getAssetDataUri('${zipId}', '${filePath}', src).then(dataUri => {
+                  if(dataUri) img.setAttribute('src', dataUri);
+              });
+          }
+      }
+
+      // Запускаем слежку за всем документом
+      observer.observe(document.documentElement, { 
+          childList: true, 
+          subtree: true, 
+          attributes: true, 
+          attributeFilter: ['src'] 
+      });
     `;
 
     if (doc.head) doc.head.appendChild(interceptScript);
@@ -780,3 +819,26 @@ window.toggleFullscreenPreview = function () {
     btn.innerHTML = '⛶ На весь экран';
   }
 }
+
+
+window.getAssetDataUri = async function (zipId, currentFilePath, relativePath) {
+  const zip = window.zipStorage[zipId];
+  if (!zip) return null;
+
+  let cleanUrl = relativePath.split(',')[0].split(' ')[0].trim();
+  const resolved = resolvePath(currentFilePath, cleanUrl.split('?')[0].trim());
+  const fileEntry = getFileFromZip(zip, resolved);
+
+  if (fileEntry) {
+    const base64 = await fileEntry.async("base64");
+    const ext = resolved.split('.').pop().toLowerCase();
+    let mime = 'image/jpeg';
+    if (ext === 'png') mime = 'image/png';
+    else if (ext === 'svg') mime = 'image/svg+xml';
+    else if (ext === 'gif') mime = 'image/gif';
+    else if (ext === 'webp') mime = 'image/webp';
+    else if (ext === 'avif') mime = 'image/avif';
+    return `data:${mime};base64,${base64}`;
+  }
+  return null;
+};
