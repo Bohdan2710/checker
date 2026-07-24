@@ -501,6 +501,15 @@ async function replaceCssUrls(cssText, cssPath, zip) {
   return cssText;
 }
 
+function resolveRootIndex(pages) {
+  if (!pages || pages.length === 0) return null;
+  const indexPages = pages.filter(p => p.toLowerCase().endsWith('index.html'));
+  if (indexPages.length === 0) return pages[0];
+  // Берём index.html с наименьшей глубиной пути (ближайший к корню архива)
+  indexPages.sort((a, b) => a.split('/').length - b.split('/').length);
+  return indexPages[0];
+}
+
 window.openProjectPreview = function (zipId, startFilePath = null) {
   window.currentPreviewZip = zipId;
   const pages = window.projectPages[zipId] || [];
@@ -518,7 +527,7 @@ window.openProjectPreview = function (zipId, startFilePath = null) {
 
   let targetPage = startFilePath;
   if (!targetPage || !pages.includes(targetPage)) {
-    targetPage = pages.find(p => p.toLowerCase().endsWith('index.html')) || pages[0];
+    targetPage = resolveRootIndex(pages);
   }
 
   selector.value = targetPage;
@@ -743,8 +752,7 @@ window.handleIframeLinkClick = function (zipId, currentFilePath, href) {
 
   if (!cleanHref || cleanHref === '/') {
     if (currentLangRoot) return openPage(currentLangRoot + 'index.html');
-    const rootIndex = pages.find(p => p.toLowerCase() === 'index.html') || pages[0];
-    return openPage(rootIndex);
+    return openPage(resolveRootIndex(pages));
   }
 
   let resolved = '';
